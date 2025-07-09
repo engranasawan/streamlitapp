@@ -4,7 +4,6 @@ import pandas as pd
 import io
 import re
 import cv2
-import base64
 from google.cloud import vision
 from google.oauth2 import service_account
 
@@ -51,22 +50,17 @@ def crop_roi(img, frac, zoom_percent=20):
 
     return img[new_t:new_b, new_l:new_r]
 
-# === Main App ===
+# === Load Google Credentials from secrets.toml ===
+creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"])
+client = vision.ImageAnnotatorClient(credentials=creds)
+
+# === Streamlit UI ===
 st.set_page_config(page_title="Meter OCR", layout="wide")
 st.title("🔢 AI-Powered Energy Meter Reading (OCR)")
-st.markdown("Upload meter images and a Google Vision API key to extract readings.")
 
-# === Upload Credentials & Images ===
-creds_file = st.file_uploader("📄 Upload Google Vision API JSON key", type="json")
 uploaded_images = st.file_uploader("📸 Upload Meter Image(s)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-if creds_file and uploaded_images:
-    creds_dict = creds_file.read()
-    creds = service_account.Credentials.from_service_account_info(
-        eval(creds_dict.decode("utf-8"))
-    )
-    client = vision.ImageAnnotatorClient(credentials=creds)
-
+if uploaded_images:
     results = []
     for uploaded_file in uploaded_images:
         st.subheader(f"📷 Image: `{uploaded_file.name}`")
@@ -103,7 +97,6 @@ if creds_file and uploaded_images:
                 st.success(f"📌 Meter Reading: **{digits}** ({status})")
                 results.append((uploaded_file.name, digits))
 
-                # Visualize bounding boxes
                 vis = roi.copy()
                 for text in texts[1:]:
                     pts = [(v.x, v.y) for v in text.bounding_poly.vertices]
@@ -111,13 +104,11 @@ if creds_file and uploaded_images:
                         cv2.line(vis, pts[j], pts[(j+1)%4], (0,255,0), 2)
                 vis_resized = cv2.resize(vis, DISPLAY_SIZE)
                 st.image(vis_resized, caption="Detected Region", channels="BGR")
-
             else:
                 st.warning("⚠️ No valid 5–7 digit numeric pattern found.")
         else:
             st.warning("❌ No text detected.")
 
-    # === Download CSV ===
     if results:
         df = pd.DataFrame(results, columns=["image_name", "meter_reading"])
         csv_bytes = df.to_csv(index=False).encode()
